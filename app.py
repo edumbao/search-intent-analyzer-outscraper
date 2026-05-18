@@ -1,4 +1,4 @@
-# app.py — Search Intent Analyzer (Firecrawl + Classifier), Intent Fixes
+# app.py — Search Intent Analyzer (Outscraper + Classifier), Intent Fixes
 # Version: 1.4.0
 # Author: Knovik • Madusanka Premaratne (Madus)
 
@@ -9,6 +9,10 @@ import pandas as pd
 import numpy as np
 import requests
 import plotly.express as px
+from outscraper import OutscraperClient
+from dotenv import load_dotenv
+
+load_dotenv()
 
 try:
     from search_intent_classifier import SearchIntentClassifier, Intent  # type: ignore
@@ -17,9 +21,7 @@ except Exception:
 
 __version__ = "1.4.0"
 AUTHOR = "Knovik Engineering Team"
-FIRECRAWL_KEY = os.getenv("FIRECRAWL_API_KEY", "")
-
-FIRECRAWL_SEARCH_URL = "https://api.firecrawl.dev/v2/search"
+OUTSCRAPER_KEY = os.getenv("OUTSCRAPER_API_KEY", "")
 
 INTENT_COLORS = {"Informational":"#2563eb","Transactional":"#16a34a","Navigational":"#f59e0b","Commercial Investigation":"#ef4444"}
 CARD_CSS = '<style>.badge{display:inline-block;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600;color:white}.card{border:1px solid #e6e6e6;border-radius:14px;padding:14px 16px;margin-bottom:12px;background:#fff}.card h4{margin:0 0 6px 0}.kv{font-size:13px;color:#444}.kv b{color:#111}.smallmuted{color:#666;font-size:12px}</style>'
@@ -29,7 +31,7 @@ st.markdown(CARD_CSS, unsafe_allow_html=True)
 def badge(text, color): return f'<span class="badge" style="background:{color}">{text}</span>'
 
 def hero_banner():
-    st.markdown(f'<div style="text-align:center;padding:18px 8px;border-top:1px solid #e6e6e6;"><h2 style="margin:6px 0 10px 0;">Search Intent Analyzer v{__version__}</h2><p style="margin:6px 0 6px 0;">Built by <strong>{AUTHOR}</strong></p><p style="margin:0;">Powered by Firecrawl + Hybrid Classifier</p></div>', unsafe_allow_html=True)
+    st.markdown(f'<div style="text-align:center;padding:18px 8px;border-top:1px solid #e6e6e6;"><h2 style="margin:6px 0 10px 0;">Search Intent Analyzer v{__version__}</h2><p style="margin:6px 0 6px 0;">Built by <strong>{AUTHOR}</strong></p><p style="margin:0;">Powered by Outscraper + Hybrid Classifier</p></div>', unsafe_allow_html=True)
 
 def app_footer():
     st.markdown(f'<hr style="margin-top:36px;"/><div style="text-align:center;font-size:13px;color:#666;padding-bottom:12px;"><div><strong>Search Intent Analyzer</strong> • v{__version__}</div><div>© {dt.datetime.now().year} {AUTHOR} — MIT License</div></div>', unsafe_allow_html=True)
@@ -43,17 +45,32 @@ with st.sidebar:
     w_rules  = st.slider('Keyword modifiers (rules)', 0, 100, 20)
     w_pages  = st.slider('Top pages content cues', 0, 100, 25)
     clf_weight = st.slider('Classifier weight (hybrid)', 0, 100, 30)
-    st.divider(); st.subheader('Firecrawl (required)')
-    fc_key_ui = st.text_input('FIRECRAWL_API_KEY', FIRECRAWL_KEY, type='password')
-    if fc_key_ui: FIRECRAWL_KEY = fc_key_ui
-    country = st.text_input('Country code (ISO)', 'US')
-    location = st.text_input('Location (optional)', '')
-    limit = st.slider('Number of results', 1, 20, 10)
-    st.divider(); st.subheader('Rules')
-    informational_mods = st.text_area('Informational', 'how,what,why,who,guide,tutorial,learn,meaning,definition,ideas,examples,steps')
-    transactional_mods = st.text_area('Transactional', 'buy,price,deal,discount,coupon,book,order,subscribe,download')
-    navigational_mods = st.text_area('Navigational', 'brand,login,official,homepage,near me,locations,contact')
-    commercial_mods = st.text_area('Commercial Investigation', 'best,top,vs,review,compare,comparison,alternative,pros,cons')
+    st.divider()
+st.divider()
+st.subheader('Outscraper (required)')
+
+outscraper_key_ui = st.text_input(
+    'OUTSCRAPER_API_KEY',
+    value="",
+    type='password',
+    placeholder="Leave blank to use .env key"
+)
+
+if outscraper_key_ui:
+    OUTSCRAPER_KEY = outscraper_key_ui
+
+st.divider()
+st.subheader("Search Settings")
+
+country = st.text_input('Country code (ISO)', 'US')
+location = st.text_input('Location (optional)', '')
+limit = st.slider('Number of results', 1, 20, 10)
+
+st.divider(); st.subheader('Rules')
+informational_mods = st.text_area('Informational', 'how,what,why,who,guide,tutorial,learn,meaning,definition,ideas,examples,steps')
+transactional_mods = st.text_area('Transactional', 'buy,price,deal,discount,coupon,book,order,subscribe,download')
+navigational_mods = st.text_area('Navigational', 'brand,login,official,homepage,near me,locations,contact')
+commercial_mods = st.text_area('Commercial Investigation', 'best,top,vs,review,compare,comparison,alternative,pros,cons')
 
 INTENTS = ['Informational','Transactional','Navigational','Commercial Investigation']
 INTEGRATION_VERBS = ["connect","pair","link","use","enable","setup","set up","add","integrate","bridge","work with","works with"]
@@ -70,12 +87,94 @@ def detect_brand_pairs(texts):
             if b in tl: seen.add(b)
     return len(seen)
 
-def firecrawl_search(query, limit=10, country='US', location=''):
-    if not FIRECRAWL_KEY: raise RuntimeError('FIRECRAWL_API_KEY not set')
-    headers={'Authorization': f'Bearer {FIRECRAWL_KEY}', 'Content-Type':'application/json'}
-    payload={'query':query,'limit':limit,'country':country,'location':location or None,'sources':['web'],'scrapeOptions':{'formats':['markdown','html'],'onlyMainContent':True,'storeInCache':True}}
-    payload={k:v for k,v in payload.items() if v not in (None,'',[])}
-    r=requests.post(FIRECRAWL_SEARCH_URL, headers=headers, json=payload, timeout=60); r.raise_for_status(); return r.json()
+def normalize_outscraper_results(raw):
+    """
+    Convert Outscraper Google Search results into the shape used by the app.
+    Handles common Outscraper response formats.
+    """
+
+    candidates = []
+
+    # Case 1: Outscraper returns: [ { "organic_results": [...] } ]
+    if isinstance(raw, list) and len(raw) > 0 and isinstance(raw[0], dict):
+        first = raw[0]
+        candidates = (
+            first.get("organic_results")
+            or first.get("results")
+            or first.get("data")
+            or []
+        )
+
+    # Case 2: Outscraper returns: [ [ {...}, {...} ] ]
+    elif isinstance(raw, list) and len(raw) > 0 and isinstance(raw[0], list):
+        candidates = raw[0]
+
+    # Case 3: Outscraper returns: { "organic_results": [...] }
+    elif isinstance(raw, dict):
+        candidates = (
+            raw.get("organic_results")
+            or raw.get("results")
+            or raw.get("data")
+            or []
+        )
+
+    items = []
+
+    for result in candidates:
+        if not isinstance(result, dict):
+            continue
+
+        title = result.get("title", "")
+
+        description = (
+            result.get("description", "")
+            or result.get("snippet", "")
+            or result.get("text", "")
+        )
+
+        url = (
+            result.get("url", "")
+            or result.get("link", "")
+            or result.get("site_link", "")
+        )
+
+        if not url:
+            continue
+
+        items.append({
+            "title": title,
+            "description": description,
+            "url": url,
+            "markdown": "",
+            "html": ""
+        })
+
+    return items
+
+
+def outscraper_search(query, limit=10, country="US", location=""):
+    if not OUTSCRAPER_KEY:
+        raise RuntimeError("OUTSCRAPER_API_KEY not set")
+
+    client = OutscraperClient(api_key=OUTSCRAPER_KEY)
+
+    search_query = query
+    if location:
+        search_query = f"{query} {location}"
+
+    raw = client.google_search(
+        [search_query],
+        language="en",
+        region=country.lower()
+    )
+
+    items = normalize_outscraper_results(raw)
+
+    return {
+        "data": {
+            "web": items[:limit]
+        }
+    }
 
 def map_features_to_intents_from_fc(items, query):
     score={i:0.0 for i in INTENTS}
@@ -153,7 +252,7 @@ with tab_input:
     run_btn=st.button('Run Analysis', type='primary')
 
 def run_for_keyword(q):
-    data=firecrawl_search(q, limit=limit, country=country, location=location)
+    data = outscraper_search(q, limit=limit, country=country, location=location)
     items=(data.get('data') or {}).get('web', [])
     s_serp=map_features_to_intents_from_fc(items, q)
     mods={'informational':[m.strip() for m in informational_mods.split(',') if m.strip()],
@@ -178,16 +277,39 @@ def run_for_keyword(q):
             'top_urls':json.dumps(top_urls),'scores':json.dumps(combined),'notes':json.dumps(page_notes),'clf_scores':clf_scores_json}
 
 if run_btn:
-    kw_list=[k.strip() for k in (kws_text or '').splitlines() if k.strip()]; kw_list=list(dict.fromkeys(kw_list))
-    if not FIRECRAWL_KEY: st.error('Please provide FIRECRAWL_API_KEY in the sidebar or environment.')
-    elif not kw_list: st.warning('Please enter at least one keyword.')
+    kw_list = [k.strip() for k in (kws_text or '').splitlines() if k.strip()]
+    kw_list = list(dict.fromkeys(kw_list))
+
+    if not OUTSCRAPER_KEY:
+        st.error('Please provide OUTSCRAPER_API_KEY in the sidebar or environment.')
+    elif not kw_list:
+        st.warning('Please enter at least one keyword.')
     else:
-        rows=[]; progress=st.progress(0)
-        for i,q in enumerate(kw_list, start=1):
-            try: rows.append(run_for_keyword(q))
-            except Exception as e: rows.append({'keyword':q,'primary_intent':'','secondary_intent':'','confidence_pct':0,'branching':'Error','top_urls':'[]','scores':'{}','notes':json.dumps({'error':str(e)}),'clf_scores':'{}'})
-            progress.progress(int(i/len(kw_list)*100))
-        progress.empty(); st.session_state['result_df']=pd.DataFrame(rows); st.success('Done! See the Results tab.')
+        rows = []
+        progress = st.progress(0)
+
+        for i, q in enumerate(kw_list, start=1):
+            try:
+                rows.append(run_for_keyword(q))
+            except Exception as e:
+                st.error(f"Error while analyzing '{q}': {e}")
+                rows.append({
+                    'keyword': q,
+                    'primary_intent': 'Error',
+                    'secondary_intent': '',
+                    'confidence_pct': 0,
+                    'branching': 'Error',
+                    'top_urls': '[]',
+                    'scores': '{}',
+                    'notes': json.dumps({'error': str(e)}),
+                    'clf_scores': '{}'
+                })
+
+            progress.progress(int(i / len(kw_list) * 100))
+
+        progress.empty()
+        st.session_state['result_df'] = pd.DataFrame(rows)
+        st.success('Done! See the Results tab.')
 
 with tab_results:
     df=st.session_state.get('result_df')

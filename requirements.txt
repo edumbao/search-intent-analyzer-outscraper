@@ -6,3 +6,4 @@ beautifulsoup4
 plotly
 python-dotenv
 openpyxl
+outscraper

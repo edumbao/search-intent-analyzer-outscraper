@@ -1,13 +1,17 @@
-# Search Intent Analyzer (Firecrawl + Classifier)
-Version: 1.3.0
+# Search Intent Analyzer - Outscraper Version
 
-- Firecrawl for search + content
-- Custom classifier (uploaded) for SERP/title-based scoring
-- Hybrid fusion with weights, engaging UI
+This is my modified version of an open-source Search Intent Analyzer.
 
-## Run
-```bash
-pip install -r requirements.txt
-export FIRECRAWL_API_KEY="fc-xxxx"
-streamlit run app.py
-```
+I replaced the Firecrawl API integration with Outscraper Google Search API and used it to analyze search intent from Google SERP results.
+
+## Tech Stack
+
+- Python
+- Streamlit
+- Outscraper Google Search API
+- Pandas
+- Plotly
+
+## Notes
+
+This project is for learning SEO automation and search intent analysis.
